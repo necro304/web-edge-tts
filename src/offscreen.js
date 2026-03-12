@@ -46,22 +46,32 @@ function initAudio() {
     audioElement = new Audio();
     mediaSource = new MediaSource();
     audioElement.src = URL.createObjectURL(mediaSource);
-    
-    mediaSource.addEventListener('sourceopen', () => {
-        try {
-            sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
-            sourceBuffer.addEventListener('updateend', processQueue);
-        } catch (e) {
-            console.error('MSE sourceopen error', e);
-        }
-    });
 
-    audioElement.addEventListener('ended', () => {
-        chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'ended', messageId: currentMessageId });
-    });
-    audioElement.addEventListener('error', (e) => {
-        console.error("Audio element error", audioElement.error);
-        chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'error', error: 'Audio playback error', messageId: currentMessageId });
+    return new Promise((resolve, reject) => {
+        mediaSource.addEventListener('sourceopen', () => {
+            try {
+                sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+                sourceBuffer.addEventListener('updateend', processQueue);
+                resolve();
+            } catch (e) {
+                console.error('MSE sourceopen error', e);
+                reject(e);
+            }
+        });
+
+        audioElement.addEventListener('ended', () => {
+            chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'ended', messageId: currentMessageId });
+        });
+        audioElement.addEventListener('error', (e) => {
+            const mediaErr = audioElement.error;
+            if (!mediaErr || !mediaErr.code) {
+                console.warn("[TTS] Spurious audio error event (no MediaError), ignoring");
+                return;
+            }
+            const errMsg = `Audio error code=${mediaErr.code} message=${mediaErr.message}`;
+            console.error("[TTS] Audio element error:", errMsg);
+            chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'error', error: errMsg, messageId: currentMessageId });
+        });
     });
 }
 
@@ -83,10 +93,8 @@ async function startPlayback(msgId, text, options) {
     
     currentMessageId = msgId;
     queue = [];
-    initAudio();
-    audioElement.play().catch(e => {
-        chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'error', error: 'Autoplay failed', messageId: msgId });
-    });
+    let firstChunkReceived = false;
+    await initAudio();
 
     const voice = options?.voice || 'es-MX-DaliaNeural';
     const rate = options?.rate || '+0%';
@@ -102,6 +110,7 @@ async function startPlayback(msgId, text, options) {
     currentSocket = new WebSocket(url);
     
     currentSocket.onopen = () => {
+        console.log('[TTS] WebSocket connected');
         const configMsg = `X-Timestamp:${new Date().toISOString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`;
         currentSocket.send(configMsg);
 
@@ -112,7 +121,9 @@ async function startPlayback(msgId, text, options) {
 
     currentSocket.onmessage = async (event) => {
         if (typeof event.data === 'string') {
+            console.log('[TTS] Text message:', event.data.substring(0, 100));
             if (event.data.includes('Path:turn.end')) {
+                console.log('[TTS] turn.end received, closing stream');
                 currentSocket.close();
                 currentSocket = null;
                 const endStream = () => {
@@ -128,26 +139,33 @@ async function startPlayback(msgId, text, options) {
             }
         } else if (event.data instanceof Blob) {
             const buffer = await event.data.arrayBuffer();
-            const view = new Uint8Array(buffer);
-            let headerEnd = -1;
-            
-            for (let i = 0; i < view.length - 3; i++) {
-                if (view[i] === 0x0D && view[i+1] === 0x0A && view[i+2] === 0x0D && view[i+3] === 0x0A) {
-                    headerEnd = i + 4;
-                    break;
-                }
-            }
+            // Binary messages: first 2 bytes = header length (big-endian uint16)
+            const headerLen = new DataView(buffer).getUint16(0);
+            const audioData = buffer.slice(2 + headerLen);
 
-            if (headerEnd !== -1) {
-                const audioData = buffer.slice(headerEnd);
+            console.log(`[TTS] Binary chunk: total=${buffer.byteLength}, headerLen=${headerLen}, audio=${audioData.byteLength}`);
+
+            if (audioData.byteLength > 0) {
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true;
+                    console.log('[TTS] First audio chunk, calling play()');
+                    audioElement.play().catch(e => {
+                        console.error('[TTS] Autoplay failed:', e);
+                        chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'error', error: 'Autoplay failed', messageId: msgId });
+                    });
+                }
                 queue.push(audioData);
                 processQueue();
             }
         }
     };
 
+    currentSocket.onclose = (event) => {
+        console.log(`[TTS] WebSocket closed: code=${event.code} reason=${event.reason}`);
+    };
+
     currentSocket.onerror = (error) => {
-        console.error('WebSocket Error:', error);
+        console.error('[TTS] WebSocket Error:', error);
         chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'error', error: 'WebSocket connection failed (403 or network error)', messageId: msgId });
     };
 }
