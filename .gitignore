@@ -1,0 +1,24 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Project-specific
+*.mp3
+test-tts*.js
+package.json
+package-lock.json
+
+# Extensions generated metadata
+src/_metadata/
+
+# Skill and Agent related (optional, but keeping project lean)
+.agent/
+.agents/
+.claude/
