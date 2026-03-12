@@ -176,3 +176,7 @@ try {
 - **Una voz a la vez**: Solo se reproduce un mensaje simultáneamente. Una nueva llamada a `speak()` cancela la anterior.
 - **Sin build**: La extensión usa JavaScript vanilla, no requiere compilación ni dependencias npm.
 - **Raspberry Pi**: Compatible con Chromium en Raspberry Pi. Cargar como extensión sin empaquetar en modo desarrollador.
+
+## Disclaimer
+
+> **Este proyecto es solo para fines educativos y de investigación.** El autor no se hace responsable del uso que terceros puedan dar a este software. El uso de este proyecto es bajo tu propia responsabilidad. Este software interactúa con servicios de terceros (Microsoft/Bing) y su uso puede estar sujeto a los términos de servicio de dichos proveedores. El autor no garantiza la disponibilidad, estabilidad ni continuidad del servicio de síntesis de voz.
