@@ -1,10 +1,14 @@
-# Edge TTS Chrome Extension
+# web-edge-tts
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Extensión de Chrome (Manifest V3) que expone un API de Text-to-Speech en cualquier página web usando el servicio de voz de Microsoft Edge. No requiere API keys ni servidores externos.
 
 ## Instalación
 
-1. Clona o descarga este repositorio
+```bash
+git clone https://github.com/necro304/web-edge-tts.git
+```
 2. Abre `chrome://extensions/` en Chrome o Chromium
 3. Activa **Modo desarrollador** (esquina superior derecha)
 4. Click en **Cargar extensión sin empaquetar**
