@@ -18,7 +18,9 @@ package-lock.json
 # Extensions generated metadata
 src/_metadata/
 
-# Skill and Agent related (optional, but keeping project lean)
+# Skill and Agent related
 .agent/
 .agents/
 .claude/
+skills-lock.json
+docs/
