@@ -14,8 +14,9 @@ function generateUUID() {
 
 async function getSecMsGec() {
     const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-    const ticks = Math.floor(Date.now() / 1000 + 11644473600) * 10000000;
-    const roundedTicks = ticks - (ticks % 3000000000);
+    // Use BigInt to avoid overflow beyond Number.MAX_SAFE_INTEGER
+    const ticks = BigInt(Math.floor(Date.now() / 1000) + 11644473600) * 10000000n;
+    const roundedTicks = ticks - (ticks % 3000000000n);
     const strToHash = `${roundedTicks}${TRUSTED_CLIENT_TOKEN}`;
     
     const encoder = new TextEncoder();
@@ -90,10 +91,11 @@ async function startPlayback(msgId, text, options) {
     if (currentSocket) {
         try { currentSocket.close(); } catch(e){}
     }
-    
+
     currentMessageId = msgId;
     queue = [];
     let firstChunkReceived = false;
+    let audioDataAppended = false;
     await initAudio();
 
     const voice = options?.voice || 'es-MX-DaliaNeural';
@@ -127,13 +129,37 @@ async function startPlayback(msgId, text, options) {
                 currentSocket.close();
                 currentSocket = null;
                 const endStream = () => {
-                    if (mediaSource && mediaSource.readyState === 'open') {
-                        if (sourceBuffer && !sourceBuffer.updating && queue.length === 0) {
-                            try { mediaSource.endOfStream(); } catch(e){}
-                        } else {
-                            setTimeout(endStream, 50);
-                        }
+                    if (!mediaSource || mediaSource.readyState !== 'open') return;
+                    if (sourceBuffer && sourceBuffer.updating || queue.length > 0) {
+                        setTimeout(endStream, 50);
+                        return;
                     }
+                    // Wait for demuxer to initialize before calling endOfStream
+                    // readyState >= 2 (HAVE_CURRENT_DATA) means demuxer has parsed metadata
+                    if (audioDataAppended && audioElement.readyState < 2) {
+                        console.log('[TTS] Waiting for demuxer initialization before endOfStream...');
+                        const onReady = () => {
+                            audioElement.removeEventListener('loadedmetadata', onReady);
+                            clearTimeout(fallback);
+                            if (mediaSource && mediaSource.readyState === 'open') {
+                                try { mediaSource.endOfStream(); } catch(e){}
+                            }
+                        };
+                        const fallback = setTimeout(() => {
+                            audioElement.removeEventListener('loadedmetadata', onReady);
+                            console.warn('[TTS] Demuxer init timeout, skipping endOfStream');
+                            // Don't call endOfStream - let audio element handle cleanup
+                            chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'ended', messageId: currentMessageId });
+                        }, 3000);
+                        audioElement.addEventListener('loadedmetadata', onReady);
+                        return;
+                    }
+                    if (!audioDataAppended) {
+                        console.warn('[TTS] No audio data received, skipping endOfStream');
+                        chrome.runtime.sendMessage({ action: 'offscreen-event', event: 'ended', messageId: currentMessageId });
+                        return;
+                    }
+                    try { mediaSource.endOfStream(); } catch(e){}
                 };
                 endStream();
             }
@@ -146,6 +172,7 @@ async function startPlayback(msgId, text, options) {
             console.log(`[TTS] Binary chunk: total=${buffer.byteLength}, headerLen=${headerLen}, audio=${audioData.byteLength}`);
 
             if (audioData.byteLength > 0) {
+                audioDataAppended = true;
                 if (!firstChunkReceived) {
                     firstChunkReceived = true;
                     console.log('[TTS] First audio chunk, calling play()');
@@ -181,7 +208,10 @@ chrome.runtime.onMessage.addListener((message) => {
         }
         queue = [];
         if (mediaSource && mediaSource.readyState === 'open') {
-            try { mediaSource.endOfStream(); } catch(e){}
+            // Only call endOfStream if demuxer has initialized (readyState >= 2)
+            if (audioElement && audioElement.readyState >= 2) {
+                try { mediaSource.endOfStream(); } catch(e){}
+            }
         }
         if (currentSocket) {
             try { currentSocket.close(); } catch(e){}
